@@ -1,0 +1,6 @@
+{
+  "name": "ArtGen AI",
+  "description": "An AI-powered application for generating artistic images from text prompts using Google Gemini. Users can specify prompts, artistic styles, aspect ratios, and export formats to create unique visual content.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
