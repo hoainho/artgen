@@ -1,5 +1,5 @@
 
-import { ArtisticStyle, ReleaseNote, ExportFormat, ExportMimeType } from './types'; // Removed AspectRatio, AspectRatioValue
+import { ArtisticStyle, ReleaseNote, ExportFormat, ExportMimeType } from './types';
 
 export const ARTISTIC_STYLES: ReadonlyArray<ArtisticStyle> = [
   { value: 'Photorealistic', label: 'Photorealistic' },
@@ -19,26 +19,18 @@ export const ARTISTIC_STYLES: ReadonlyArray<ArtisticStyle> = [
   { value: 'Minimalist design', label: 'Minimalist' },
 ];
 
-// ASPECT_RATIOS constant removed as the feature is temporarily disabled.
-// export const ASPECT_RATIOS: ReadonlyArray<AspectRatio> = [
-//   { value: 'SQUARE', label: 'Square (1:1)' },
-//   { value: 'PORTRAIT', label: 'Portrait (Default Vertical)' },
-//   { value: 'LANDSCAPE', label: 'Landscape (Default Horizontal)' },
-// ];
-
 export const EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
     { value: 'image/png', label: 'PNG' },
     { value: 'image/jpeg', label: 'JPEG' },
 ];
 
 export const INITIAL_RELEASE_NOTES: ReleaseNote = {
-  version: '1.0.1', // Incremented version
-  date: 'July 30, 2024', // Updated date
+  version: '1.0.2',
+  date: 'May 20, 2024',
   changes: [
-    'Temporarily removed aspect ratio selection to resolve image generation errors. Images will now use the API default aspect ratio.',
-    'Text-to-Image generation using Google Gemini API (model: imagen-3.0-generate-002).',
-    'Choose from 15 distinct artistic styles to guide image creation.',
-    'Export generated images in PNG or JPEG format.',
-    'View application updates via the integrated Release Notes display.'
+    'Fixed 404 "Requested entity was not found" error by switching to the gemini-2.5-flash-image model.',
+    'Updated API communication logic to use generateContent for image generation, ensuring better compatibility with the latest SDK.',
+    'Improved error handling for API model availability and quota issues.',
+    'Optimized text generation model to gemini-3-flash-preview.'
   ],
 };
