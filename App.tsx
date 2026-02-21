@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { ImageGeneratorForm } from './components/ImageGeneratorForm';
@@ -8,7 +8,7 @@ import { ReleaseNotesModal } from './components/ReleaseNotesModal';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { generateImageApi } from './services/geminiService';
 import { GenerationParams } from './types';
-import { INITIAL_RELEASE_NOTES, ARTISTIC_STYLES, EXPORT_FORMATS } from './constants'; // ASPECT_RATIOS removed
+import { INITIAL_RELEASE_NOTES, ARTISTIC_STYLES, EXPORT_FORMATS } from './constants';
 import { useApiKey } from './hooks/useApiKey';
 
 const App: React.FC = () => {
@@ -21,45 +21,28 @@ const App: React.FC = () => {
 
   const [apiKey, saveApiKey] = useApiKey();
 
-  useEffect(() => {
-    if (apiKey === null && localStorage.getItem('artgen_ai_api_key') === null) {
-       const hasBeenPrompted = sessionStorage.getItem('apiKeyPrompted');
-       if (!hasBeenPrompted) {
-        setShowApiKeyModal(true);
-        sessionStorage.setItem('apiKeyPrompted', 'true');
-       }
-    }
-  }, [apiKey]);
-
-  const handleGenerateImage = useCallback(async (params: Omit<GenerationParams, 'aspectRatio'>) => { // aspectRatio removed from params
-    if (!apiKey) {
-      setError("API Key is missing. Please enter your API Key via the 'API Key' button in the header.");
-      setShowApiKeyModal(true);
-      return;
-    }
-
+  const handleGenerateImage = useCallback(async (params: Omit<GenerationParams, 'aspectRatio'>) => {
     setIsLoading(true);
     setError(null);
     setGeneratedImage(null);
 
     const fullPrompt = `${params.prompt}, ${params.style}`;
-    
+
     try {
-      // Pass params.exportFormat directly, aspectRatio is removed from generateImageApi call
-      const result = await generateImageApi(fullPrompt, params.exportFormat, apiKey); 
+      const result = await generateImageApi(fullPrompt, params.exportFormat, apiKey);
       setGeneratedImage(`data:${result.mimeType};base64,${result.base64Image}`);
       setGeneratedImageMimeType(result.mimeType);
     } catch (err) {
       console.error("Image generation failed:", err);
       if (err instanceof Error) {
-        setError(`Failed to generate image: ${err.message}`);
+        setError(err.message);
       } else {
         setError("An unknown error occurred during image generation.");
       }
     } finally {
       setIsLoading(false);
     }
-  }, [apiKey]); // saveApiKey removed from dependencies as it's not directly used here
+  }, [apiKey]);
 
   const toggleReleaseNotes = () => {
     setShowReleaseNotes(prev => !prev);
@@ -72,54 +55,43 @@ const App: React.FC = () => {
   const handleSaveApiKey = (newApiKey: string) => {
     saveApiKey(newApiKey);
     setShowApiKeyModal(false);
-    if (newApiKey && newApiKey.trim() !== '') {
-        setError(null); 
-    } else {
-        setError("API Key was removed or not provided. Image generation will fail.");
-    }
+    setError(null);
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-900 to-slate-800 text-gray-100">
-      <Header 
-        appName="ArtGen AI" 
+    <div className="min-h-screen flex flex-col bg-surface font-sans">
+      <Header
+        appName="ArtGen AI"
         onShowReleaseNotes={toggleReleaseNotes}
         onManageApiKey={handleManageApiKey}
       />
-      
-      <main className="flex-grow container mx-auto px-4 py-8 flex flex-col lg:flex-row gap-8">
-        <div className="lg:w-1/3 bg-slate-800 p-6 rounded-xl shadow-2xl border border-slate-700">
+
+      <main className="flex-grow flex flex-col items-center px-4 sm:px-6 pt-8 pb-12">
+        <div className="w-full max-w-2xl space-y-6">
           <ImageGeneratorForm
             onGenerate={handleGenerateImage}
             isLoading={isLoading}
             artisticStyles={ARTISTIC_STYLES}
-            // aspectRatios={ASPECT_RATIOS} // REMOVED
             exportFormats={EXPORT_FORMATS}
-            isApiKeySet={!!apiKey}
+            isApiKeySet={true}
           />
-           {!apiKey && (
-            <div className="mt-4 p-3 bg-yellow-500/20 text-yellow-300 border border-yellow-500 rounded-lg text-sm">
-              API Key not set. Click the "API Key" button in the header to enter your Google API Key.
-            </div>
-          )}
-        </div>
-        <div className="lg:w-2/3 bg-slate-800 p-6 rounded-xl shadow-2xl flex flex-col items-center justify-center border border-slate-700">
+
           {error && (
-            <div className="mb-4 p-4 bg-red-500/20 text-red-300 border border-red-500 rounded-lg w-full text-center">
-              <p className="font-semibold">Error</p>
-              <p>{error}</p>
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-300 text-sm">
+              {error}
             </div>
           )}
-          <ImageDisplay 
-            imageDataUrl={generatedImage} 
+
+          <ImageDisplay
+            imageDataUrl={generatedImage}
             isLoading={isLoading}
             mimeType={generatedImageMimeType}
           />
         </div>
       </main>
-      
+
       <Footer onShowReleaseNotes={toggleReleaseNotes} />
-      
+
       {showReleaseNotes && (
         <ReleaseNotesModal
           releaseNotes={INITIAL_RELEASE_NOTES}

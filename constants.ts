@@ -1,5 +1,5 @@
 
-import { ArtisticStyle, ReleaseNote, ExportFormat, ExportMimeType } from './types';
+import { ArtisticStyle, ReleaseNote, ExportFormat } from './types';
 
 export const ARTISTIC_STYLES: ReadonlyArray<ArtisticStyle> = [
   { value: 'Photorealistic', label: 'Photorealistic' },
@@ -25,12 +25,14 @@ export const EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
 ];
 
 export const INITIAL_RELEASE_NOTES: ReleaseNote = {
-  version: '1.0.2',
-  date: 'May 20, 2024',
+  version: '2.0.0',
+  date: 'February 21, 2026',
   changes: [
-    'Fixed 404 "Requested entity was not found" error by switching to the gemini-2.5-flash-image model.',
-    'Updated API communication logic to use generateContent for image generation, ensuring better compatibility with the latest SDK.',
-    'Improved error handling for API model availability and quota issues.',
-    'Optimized text generation model to gemini-3-flash-preview.'
+    'Complete UI redesign with premium dark theme and violet accent palette.',
+    'Integrated CLIProxy for out-of-the-box usage — no API key required.',
+    'New single-column centered layout with style pills and segmented format toggle.',
+    'Added shimmer loading animations and hover-to-download on generated images.',
+    'Improved error handling for model cooldown and quota limits with user-friendly messages.',
+    'Optional custom Google API key support via settings.',
   ],
 };
