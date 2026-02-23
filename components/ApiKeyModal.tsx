@@ -2,19 +2,14 @@ import React, { useState } from 'react';
 
 interface ApiKeyModalProps {
   currentApiKey: string | null;
-  onSave: (apiKey: string) => void;
+  onSave: (key: string) => void;
   onClose: () => void;
 }
 
 export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ currentApiKey, onSave, onClose }) => {
-  const [apiKeyInput, setApiKeyInput] = useState<string>(currentApiKey || '');
-
+  const [keyInput, setKeyInput] = useState<string>(currentApiKey || '');
   const handleSave = () => {
-    if (apiKeyInput.trim()) {
-      onSave(apiKeyInput.trim());
-    } else {
-      onSave('');
-    }
+    onSave(keyInput.trim());
   };
 
   return (
@@ -35,33 +30,34 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ currentApiKey, onSave,
           </button>
         </div>
         
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div>
-            <label htmlFor="apiKey" className="block text-sm font-medium text-gray-400 mb-1.5">
-              Google API Key
+            <label htmlFor="geminiApiKey" className="block text-sm font-medium text-gray-400 mb-1.5">
+              Google Gemini API Key
             </label>
             <input
               type="password"
-              id="apiKey"
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
+              id="geminiApiKey"
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
               placeholder="Leave empty to use default proxy"
               className="w-full p-3 bg-surface-200 border border-white/8 rounded-xl text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-accent-500/50 focus:border-accent-500/50 transition-all"
             />
-          </div>
-          <div className="bg-surface-200/50 rounded-xl p-3 border border-white/5">
-            <p className="text-xs text-gray-500 leading-relaxed">
-              The app works out of the box using a built-in proxy.
-              Optionally, provide your own Google API key from{' '}
-              <a 
-                href="https://aistudio.google.com/app/apikey" 
-                target="_blank" 
-                rel="noopener noreferrer" 
+            <p className="mt-1.5 text-xs text-gray-600">
+              Get your key from{' '}
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-accent-400 hover:text-accent-300 underline underline-offset-2"
               >
                 Google AI Studio
-              </a>{' '}
-              to use your own quota.
+              </a>
+            </p>
+          </div>
+          <div className="bg-surface-200/50 rounded-xl p-3 border border-white/5">
+            <p className="text-xs text-gray-500 leading-relaxed">
+              Gemini works out of the box via built-in proxy. Provide your own API key to use your own quota or to unlock Pro tier models.
             </p>
           </div>
         </div>

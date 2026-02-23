@@ -1,23 +1,55 @@
+
 import React from 'react';
+import { AppPage } from '../hooks/useHashRouter';
 
 interface HeaderProps {
   appName: string;
+  currentPage: AppPage;
+  onNavigate: (page: AppPage) => void;
   onShowReleaseNotes: () => void;
   onManageApiKey: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ appName, onShowReleaseNotes, onManageApiKey }) => {
+export const Header: React.FC<HeaderProps> = ({ appName, currentPage, onNavigate, onShowReleaseNotes, onManageApiKey }) => {
+  const navItems: { page: AppPage; label: string }[] = [
+    { page: 'home', label: 'Home' },
+    { page: 'create', label: 'Create' },
+    { page: 'guide', label: 'Guide' },
+  ];
+
   return (
     <header className="sticky top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-white/5">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent-500 to-accent-700 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-white">
-              <path fillRule="evenodd" d="M4.5 2A1.5 1.5 0 003 3.5v13A1.5 1.5 0 004.5 18h11a1.5 1.5 0 001.5-1.5V7.621a1.5 1.5 0 00-.44-1.06l-4.12-4.122A1.5 1.5 0 0011.378 2H4.5zm4.75 6.5a.75.75 0 011.5 0v2.25h2.25a.75.75 0 010 1.5h-2.25v2.25a.75.75 0 01-1.5 0v-2.25H7a.75.75 0 010-1.5h2.25V8.5z" clipRule="evenodd" />
-            </svg>
-          </div>
-          <span className="text-base font-semibold tracking-tight text-white">{appName}</span>
+        <div className="flex items-center gap-6">
+          <button
+            onClick={() => onNavigate('home')}
+            className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"
+          >
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent-500 to-accent-700 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-white">
+                <path fillRule="evenodd" d="M4.5 2A1.5 1.5 0 003 3.5v13A1.5 1.5 0 004.5 18h11a1.5 1.5 0 001.5-1.5V7.621a1.5 1.5 0 00-.44-1.06l-4.12-4.122A1.5 1.5 0 0011.378 2H4.5zm4.75 6.5a.75.75 0 011.5 0v2.25h2.25a.75.75 0 010 1.5h-2.25v2.25a.75.75 0 01-1.5 0v-2.25H7a.75.75 0 010-1.5h2.25V8.5z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <span className="text-base font-semibold tracking-tight text-white">{appName}</span>
+          </button>
+
+          <nav className="hidden sm:flex items-center gap-1">
+            {navItems.map((item) => (
+              <button
+                key={item.page}
+                onClick={() => onNavigate(item.page)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 ${
+                  currentPage === item.page
+                    ? 'text-accent-300 bg-accent-500/10'
+                    : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
         </div>
+
         <div className="flex items-center gap-1">
           <button
             onClick={onShowReleaseNotes}

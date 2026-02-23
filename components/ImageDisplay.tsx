@@ -10,13 +10,33 @@ interface ImageDisplayProps {
 export const ImageDisplay: React.FC<ImageDisplayProps> = ({ imageDataUrl, isLoading, mimeType }) => {
   const handleDownload = () => {
     if (imageDataUrl) {
-      const link = document.createElement('a');
-      link.href = imageDataUrl;
-      const fileExtension = mimeType.split('/')[1] || 'png';
-      link.download = `artgen_ai_image.${fileExtension}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      try {
+        // Extract base64 data from data URL
+        const [header, base64Data] = imageDataUrl.split(',');
+        if (!header || !base64Data) return;
+
+        // Decode base64 to binary
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        // Create blob and download via object URL
+        const blob = new Blob([bytes], { type: mimeType || 'image/png' });
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        const fileExtension = mimeType.split('/')[1] || 'png';
+        link.download = `artgen_ai_image.${fileExtension}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        // Clean up object URL
+        URL.revokeObjectURL(objectUrl);
+      } catch (e) {
+        console.error('Download failed:', e);
+      }
     }
   };
 

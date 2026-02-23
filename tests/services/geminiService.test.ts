@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockGenerateContent = vi.fn();
+const mockGenerateImages = vi.fn();
 
 vi.mock('@google/genai', () => {
   return {
     GoogleGenAI: class MockGoogleGenAI {
       config: Record<string, unknown>;
-      models = { generateContent: mockGenerateContent };
+      models = {
+        generateContent: mockGenerateContent,
+        generateImages: mockGenerateImages,
+      };
       constructor(config: Record<string, unknown>) {
         this.config = config;
         MockGoogleGenAI._instances.push(this);
@@ -32,13 +36,17 @@ const MockedGoogleGenAI = GoogleGenAI as unknown as typeof GoogleGenAI & {
 import {
   createAIClient,
   isUsingProxy,
+  isQuotaError,
   generateImageApi,
   generateTextApi,
   CLIPROXY_URL,
   CLIPROXY_KEY,
   IMAGE_MODEL_PROXY,
   IMAGE_MODEL_DIRECT,
+  IMAGEN_MODEL,
 } from '../../services/geminiService';
+
+import { PROXY_MODELS_BY_TIER } from '../../constants';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -86,6 +94,32 @@ describe('createAIClient', () => {
   });
 });
 
+describe('isQuotaError', () => {
+  it('returns true for 429 errors', () => {
+    expect(isQuotaError(new Error('got status: 429'))).toBe(true);
+  });
+
+  it('returns true for RESOURCE_EXHAUSTED', () => {
+    expect(isQuotaError(new Error('RESOURCE_EXHAUSTED'))).toBe(true);
+  });
+
+  it('returns true for model_cooldown', () => {
+    expect(isQuotaError(new Error('model_cooldown'))).toBe(true);
+  });
+
+  it('returns true for cooling down', () => {
+    expect(isQuotaError(new Error('credentials are cooling down'))).toBe(true);
+  });
+
+  it('returns false for non-quota errors', () => {
+    expect(isQuotaError(new Error('NOT_FOUND'))).toBe(false);
+  });
+
+  it('returns false for non-Error values', () => {
+    expect(isQuotaError('string error')).toBe(false);
+  });
+});
+
 describe('generateImageApi', () => {
   const mockImageResponse = {
     candidates: [{
@@ -100,118 +134,205 @@ describe('generateImageApi', () => {
     }],
   };
 
-  it('uses proxy image model when apiKey is null', async () => {
-    mockGenerateContent.mockResolvedValue(mockImageResponse);
+  const mockImagenResponse = {
+    generatedImages: [{
+      image: {
+        imageBytes: 'imagenbase64data',
+        mimeType: 'image/png',
+      },
+    }],
+  };
 
-    await generateImageApi('a cat', 'image/png', null);
+  describe('proxy mode with model tiers', () => {
+    it('uses first economy model by default when apiKey is null', async () => {
+      mockGenerateContent.mockResolvedValue(mockImageResponse);
 
-    expect(mockGenerateContent).toHaveBeenCalledWith(
-      expect.objectContaining({ model: IMAGE_MODEL_PROXY }),
-    );
-  });
+      await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null);
 
-  it('uses direct image model when apiKey is provided', async () => {
-    mockGenerateContent.mockResolvedValue(mockImageResponse);
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: PROXY_MODELS_BY_TIER.economy[0] }),
+      );
+    });
 
-    await generateImageApi('a cat', 'image/png', 'user-key');
+    it('uses first standard model when standard tier is selected', async () => {
+      mockGenerateContent.mockResolvedValue(mockImageResponse);
 
-    expect(mockGenerateContent).toHaveBeenCalledWith(
-      expect.objectContaining({ model: IMAGE_MODEL_DIRECT }),
-    );
-  });
+      await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null, 'standard');
 
-  it('sends responseModalities IMAGE and TEXT', async () => {
-    mockGenerateContent.mockResolvedValue(mockImageResponse);
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: PROXY_MODELS_BY_TIER.standard[0] }),
+      );
+    });
 
-    await generateImageApi('a cat', 'image/png', null);
+    it('uses first pro model when pro tier is selected', async () => {
+      mockGenerateContent.mockResolvedValue(mockImageResponse);
 
-    expect(mockGenerateContent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config: { responseModalities: ['IMAGE', 'TEXT'] },
-      }),
-    );
-  });
+      await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null, 'pro');
 
-  it('extracts base64 image and mimeType from response', async () => {
-    mockGenerateContent.mockResolvedValue(mockImageResponse);
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: PROXY_MODELS_BY_TIER.pro[0] }),
+      );
+    });
 
-    const result = await generateImageApi('a cat', 'image/png', null);
+    it('sends responseModalities IMAGE and TEXT', async () => {
+      mockGenerateContent.mockResolvedValue(mockImageResponse);
 
-    expect(result).toEqual({
-      base64Image: 'base64encodedimage',
-      mimeType: 'image/png',
+      await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null);
+
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: { responseModalities: ['IMAGE', 'TEXT'] },
+        }),
+      );
+    });
+
+    it('does not attempt Imagen when using proxy', async () => {
+      mockGenerateContent.mockResolvedValue(mockImageResponse);
+
+      await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null);
+
+      expect(mockGenerateImages).not.toHaveBeenCalled();
+    });
+
+    it('extracts base64 image and mimeType from Gemini response', async () => {
+      mockGenerateContent.mockResolvedValue(mockImageResponse);
+
+      const result = await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null);
+
+      expect(result).toEqual({
+        base64Image: 'base64encodedimage',
+        mimeType: 'image/png',
+      });
+    });
+
+    it('falls back to outputMimeType when response has no mimeType', async () => {
+      mockGenerateContent.mockResolvedValue({
+        candidates: [{
+          content: {
+            parts: [{
+              inlineData: { data: 'img', mimeType: '' },
+            }],
+          },
+        }],
+      });
+
+      const result = await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/jpeg', null);
+      expect(result.mimeType).toBe('image/jpeg');
     });
   });
 
-  it('falls back to outputMimeType when response has no mimeType', async () => {
-    mockGenerateContent.mockResolvedValue({
-      candidates: [{
-        content: {
-          parts: [{
-            inlineData: { data: 'img', mimeType: '' },
-          }],
-        },
-      }],
+  describe('model rotation on quota errors', () => {
+    it('throws quota error when single model in tier is exhausted', async () => {
+      mockGenerateContent.mockRejectedValueOnce(new Error('got status: 429'));
+
+      await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null, 'standard'))
+        .rejects.toThrow('API quota exceeded');
+
+      expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: PROXY_MODELS_BY_TIER.standard[0] }),
+      );
+    });
+    it('throws after all models in tier are exhausted', async () => {
+      mockGenerateContent.mockRejectedValue(new Error('got status: 429'));
+      await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null))
+        .rejects.toThrow();
+    });
+    it('does not rotate on non-quota errors', async () => {
+      mockGenerateContent.mockRejectedValue(new Error('NOT_FOUND'));
+      await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null))
+        .rejects.toThrow('Image generation failed');
+      expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     });
 
-    const result = await generateImageApi('a cat', 'image/jpeg', null);
-    expect(result.mimeType).toBe('image/jpeg');
+    it('throws cooldown error on model_cooldown', async () => {
+      mockGenerateContent.mockRejectedValueOnce(new Error('model_cooldown'));
+
+      await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null, 'standard'))
+        .rejects.toThrow('cooldown');
+
+      expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it('throws when response has no image data', async () => {
-    mockGenerateContent.mockResolvedValue({
-      candidates: [{
-        content: {
-          parts: [{ text: 'no image here' }],
-        },
-      }],
+  describe('direct mode (with API key)', () => {
+    it('tries Imagen first when user provides apiKey', async () => {
+      mockGenerateImages.mockResolvedValue(mockImagenResponse);
+
+      await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', 'user-key');
+
+      expect(mockGenerateImages).toHaveBeenCalledWith(
+        expect.objectContaining({ model: IMAGEN_MODEL }),
+      );
     });
 
-    await expect(generateImageApi('a cat', 'image/png', null))
-      .rejects.toThrow('No image data found in the response parts.');
+    it('passes aspectRatio to Imagen config', async () => {
+      mockGenerateImages.mockResolvedValue(mockImagenResponse);
+
+      await generateImageApi('a cat', 'Photorealistic', '16:9', 'image/png', 'user-key');
+
+      expect(mockGenerateImages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ aspectRatio: '16:9' }),
+        }),
+      );
+    });
+
+    it('extracts image data from Imagen response', async () => {
+      mockGenerateImages.mockResolvedValue(mockImagenResponse);
+
+      const result = await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', 'user-key');
+
+      expect(result).toEqual({
+        base64Image: 'imagenbase64data',
+        mimeType: 'image/png',
+      });
+    });
+
+    it('falls back to Gemini when Imagen fails', async () => {
+      mockGenerateImages.mockRejectedValue(new Error('Imagen unavailable'));
+      mockGenerateContent.mockResolvedValue(mockImageResponse);
+
+      const result = await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', 'user-key');
+
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: IMAGE_MODEL_DIRECT }),
+      );
+      expect(result).toEqual({
+        base64Image: 'base64encodedimage',
+        mimeType: 'image/png',
+      });
+    });
   });
 
-  it('throws when response has no candidates', async () => {
-    mockGenerateContent.mockResolvedValue({ candidates: null });
+  describe('error handling', () => {
+    it('throws when Gemini response has no image data', async () => {
+      mockGenerateContent.mockResolvedValue({
+        candidates: [{
+          content: {
+            parts: [{ text: 'no image here' }],
+          },
+        }],
+      });
 
-    await expect(generateImageApi('a cat', 'image/png', null))
-      .rejects.toThrow('No candidates were returned by the API.');
-  });
+      await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null))
+        .rejects.toThrow('No image data found in the response parts.');
+    });
 
-  it('throws user-friendly message on model cooldown with reset time', async () => {
-    const cooldownError = 'got status: 429 . {"error":{"code":"model_cooldown","message":"All credentials for model gemini-3-pro-image-preview are cooling down","reset_time":"24h10m45s"}}';
-    mockGenerateContent.mockRejectedValue(new Error(cooldownError));
+    it('throws when Gemini response has no candidates', async () => {
+      mockGenerateContent.mockResolvedValue({ candidates: null });
 
-    await expect(generateImageApi('a cat', 'image/png', null))
-      .rejects.toThrow('Image model is temporarily unavailable (cooldown). Reset in: 24h10m45s');
-  });
+      await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null))
+        .rejects.toThrow('No candidates were returned by the API.');
+    });
 
-  it('suggests using own API key on cooldown', async () => {
-    mockGenerateContent.mockRejectedValue(new Error('model_cooldown'));
+    it('throws user-friendly message on invalid API key', async () => {
+      mockGenerateImages.mockRejectedValue(new Error('API key not valid'));
+      mockGenerateContent.mockRejectedValue(new Error('API key not valid'));
 
-    await expect(generateImageApi('a cat', 'image/png', null))
-      .rejects.toThrow('You can use your own Google API key');
-  });
-
-  it('throws user-friendly message on 429 / quota error', async () => {
-    mockGenerateContent.mockRejectedValue(new Error('got status: 429 . {"error":{"code":"RESOURCE_EXHAUSTED"}}'));
-
-    await expect(generateImageApi('a cat', 'image/png', null))
-      .rejects.toThrow('API quota exceeded');
-  });
-
-  it('throws user-friendly message on invalid API key', async () => {
-    mockGenerateContent.mockRejectedValue(new Error('API key not valid'));
-
-    await expect(generateImageApi('a cat', 'image/png', 'bad-key'))
-      .rejects.toThrow('Invalid API Key');
-  });
-
-  it('throws user-friendly message on 404 / NOT_FOUND', async () => {
-    mockGenerateContent.mockRejectedValue(new Error('NOT_FOUND'));
-
-    await expect(generateImageApi('a cat', 'image/png', null))
-      .rejects.toThrow('Image generation failed');
+      await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', 'bad-key'))
+        .rejects.toThrow('Invalid API Key');
+    });
   });
 });
 
@@ -293,5 +414,9 @@ describe('constants', () => {
 
   it('IMAGE_MODEL_DIRECT is gemini-2.5-flash-image', () => {
     expect(IMAGE_MODEL_DIRECT).toBe('gemini-2.5-flash-image');
+  });
+
+  it('IMAGEN_MODEL is imagen-4.0-generate-001', () => {
+    expect(IMAGEN_MODEL).toBe('imagen-4.0-generate-001');
   });
 });

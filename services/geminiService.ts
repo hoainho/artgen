@@ -1,6 +1,8 @@
 
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { ExportMimeType } from '../types';
+import { ExportMimeType, AspectRatioValue, ModelTier } from '../types';
+import { buildEnhancedPrompt, buildPromptForTier } from './promptBuilder';
+import { PROXY_MODELS_BY_TIER } from '../constants';
 
 export interface GeneratedImageResult {
   base64Image: string;
@@ -12,6 +14,7 @@ export const CLIPROXY_KEY = process.env.VITE_OPENCODE_API_KEY || 'hoainho';
 
 export const IMAGE_MODEL_PROXY = 'gemini-3-pro-image-preview';
 export const IMAGE_MODEL_DIRECT = 'gemini-2.5-flash-image';
+export const IMAGEN_MODEL = 'imagen-4.0-generate-001';
 
 export function isUsingProxy(userApiKey: string | null): boolean {
   return !userApiKey;
@@ -28,70 +31,156 @@ export function createAIClient(userApiKey: string | null): GoogleGenAI {
   });
 }
 
+async function generateWithImagen(
+  ai: GoogleGenAI,
+  prompt: string,
+  styleKey: string,
+  aspectRatio: AspectRatioValue,
+): Promise<GeneratedImageResult> {
+  const enhancedPrompt = buildEnhancedPrompt(prompt, styleKey);
+
+  const response = await ai.models.generateImages({
+    model: IMAGEN_MODEL,
+    prompt: enhancedPrompt,
+    config: {
+      numberOfImages: 1,
+      aspectRatio: aspectRatio,
+    },
+  });
+
+  const imageData = response?.generatedImages?.[0]?.image?.imageBytes;
+  if (imageData) {
+    return {
+      base64Image: imageData,
+      mimeType: 'image/png',
+    };
+  }
+
+  throw new Error("No image data returned from Imagen.");
+}
+
+async function generateWithGemini(
+  ai: GoogleGenAI,
+  model: string,
+  prompt: string,
+  styleKey: string,
+  outputMimeType: ExportMimeType,
+  modelTier: ModelTier = 'standard',
+): Promise<GeneratedImageResult> {
+  const enhancedPrompt = buildPromptForTier(prompt, styleKey, modelTier);
+
+  const response: GenerateContentResponse = await ai.models.generateContent({
+    model,
+    contents: {
+      parts: [{ text: enhancedPrompt }]
+    },
+    config: {
+      responseModalities: ["IMAGE", "TEXT"],
+    },
+  });
+
+  if (response.candidates && response.candidates[0]?.content?.parts) {
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData && part.inlineData.data) {
+        return {
+          base64Image: part.inlineData.data,
+          mimeType: (part.inlineData.mimeType as ExportMimeType) || outputMimeType,
+        };
+      }
+    }
+    throw new Error("No image data found in the response parts.");
+  }
+
+  throw new Error("No candidates were returned by the API.");
+}
+
+export function isQuotaError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message || '';
+  return (
+    msg.includes('429') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('quota') ||
+    msg.includes('model_cooldown') ||
+    msg.includes('cooling down')
+  );
+}
+
+function handleApiError(error: unknown): never {
+  console.error('Error during image generation:', error);
+
+  if (error instanceof Error) {
+    const errorMessage = error.message || '';
+
+    if (errorMessage.includes("model_cooldown") || errorMessage.includes("cooling down")) {
+      const resetMatch = errorMessage.match(/"reset_time"\s*:\s*"([^"]+)"/);
+      const resetTime = resetMatch ? resetMatch[1] : 'unknown';
+      throw new Error(
+        `Image model is temporarily unavailable (cooldown). Reset in: ${resetTime}. ` +
+        `You can use your own Google API key (via the API Key button) to bypass this limit.`
+      );
+    }
+    if (errorMessage.includes("429") || errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("quota")) {
+      const resetMatch = errorMessage.match(/"reset_time"\s*:\s*"([^"]+)"/);
+      const resetTime = resetMatch ? ` Reset in: ${resetMatch[1]}.` : '';
+      throw new Error(
+        `API quota exceeded.${resetTime} ` +
+        `You can use your own Google API key (via the API Key button) to bypass this limit.`
+      );
+    }
+    if (errorMessage.includes("NOT_FOUND") || errorMessage.includes("404")) {
+      throw new Error("Image generation failed: The requested model was not found. Please try again later.");
+    }
+    if (errorMessage.includes("API key not valid") || errorMessage.includes("API_KEY_INVALID")) {
+      throw new Error("Invalid API Key. Please check your Google API Key in the settings.");
+    }
+    throw new Error(`Image generation error: ${errorMessage}`);
+  }
+
+  throw new Error("An unknown error occurred while generating the image.");
+}
+
 export const generateImageApi = async (
   prompt: string,
+  styleKey: string,
+  aspectRatio: AspectRatioValue,
   outputMimeType: ExportMimeType,
-  apiKey: string | null
+  apiKey: string | null,
+  modelTier: ModelTier = 'economy',
 ): Promise<GeneratedImageResult> => {
   const ai = createAIClient(apiKey);
   const usingProxy = isUsingProxy(apiKey);
-  const model = usingProxy ? IMAGE_MODEL_PROXY : IMAGE_MODEL_DIRECT;
 
-  try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model,
-      contents: {
-        parts: [{ text: prompt }]
-      },
-      config: {
-        responseModalities: ["IMAGE", "TEXT"],
-      },
-    });
-
-    if (response.candidates && response.candidates[0]?.content?.parts) {
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData && part.inlineData.data) {
-          return {
-            base64Image: part.inlineData.data,
-            mimeType: (part.inlineData.mimeType as ExportMimeType) || outputMimeType
-          };
-        }
+  if (!usingProxy) {
+    try {
+      return await generateWithImagen(ai, prompt, styleKey, aspectRatio);
+    } catch (imagenError) {
+      console.warn('Imagen failed, falling back to Gemini model:', imagenError);
+      try {
+        return await generateWithGemini(ai, IMAGE_MODEL_DIRECT, prompt, styleKey, outputMimeType, 'pro');
+      } catch (fallbackError) {
+        handleApiError(fallbackError);
       }
-      throw new Error("No image data found in the response parts.");
-    } else {
-      throw new Error("No candidates were returned by the API.");
     }
-  } catch (error) {
-    console.error('Error calling Gemini API for image generation:', error);
-    if (error instanceof Error) {
-      const errorMessage = error.message || '';
-
-      if (errorMessage.includes("model_cooldown") || errorMessage.includes("cooling down")) {
-        const resetMatch = errorMessage.match(/"reset_time"\s*:\s*"([^"]+)"/);
-        const resetTime = resetMatch ? resetMatch[1] : 'unknown';
-        throw new Error(
-          `Image model is temporarily unavailable (cooldown). Reset in: ${resetTime}. ` +
-          `You can use your own Google API key (via the API Key button) to bypass this limit.`
-        );
-      }
-      if (errorMessage.includes("429") || errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("quota")) {
-        const resetMatch = errorMessage.match(/"reset_time"\s*:\s*"([^"]+)"/);
-        const resetTime = resetMatch ? ` Reset in: ${resetMatch[1]}.` : '';
-        throw new Error(
-          `API quota exceeded.${resetTime} ` +
-          `You can use your own Google API key (via the API Key button) to bypass this limit.`
-        );
-      }
-      if (errorMessage.includes("NOT_FOUND") || errorMessage.includes("404")) {
-        throw new Error("Image generation failed: The requested model was not found. Please try again later.");
-      }
-      if (errorMessage.includes("API key not valid") || errorMessage.includes("API_KEY_INVALID")) {
-        throw new Error("Invalid API Key. Please check your Google API Key in the settings.");
-      }
-      throw new Error(`Gemini API error: ${errorMessage}`);
-    }
-    throw new Error("An unknown error occurred while generating the image.");
   }
+
+  const modelsToTry = PROXY_MODELS_BY_TIER[modelTier];
+  let lastError: unknown = null;
+
+  for (const model of modelsToTry) {
+    try {
+      return await generateWithGemini(ai, model, prompt, styleKey, outputMimeType, modelTier);
+    } catch (error) {
+      lastError = error;
+      if (isQuotaError(error)) {
+        console.warn(`Model ${model} quota exhausted, trying next model...`);
+        continue;
+      }
+      handleApiError(error);
+    }
+  }
+
+  handleApiError(lastError ?? new Error('All models in the rotation chain are exhausted. Please try again later or use your own API key.'));
 };
 
 export const generateTextApi = async (prompt: string, apiKey: string | null): Promise<string> => {
