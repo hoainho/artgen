@@ -3,6 +3,30 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockGenerateContent = vi.fn();
 const mockGenerateImages = vi.fn();
 
+const mockGetModelsForTier = vi.fn();
+const mockInvalidateModelCache = vi.fn();
+
+vi.mock('../../services/modelRegistry', () => ({
+  getModelsForTier: (...args: unknown[]) => mockGetModelsForTier(...args),
+  invalidateModelCache: (...args: unknown[]) => mockInvalidateModelCache(...args),
+  isModelUnavailableError: (error: unknown) => {
+    if (!(error instanceof Error)) return false;
+    const msg = error.message.toLowerCase();
+    return (
+      msg.includes('unknown provider') ||
+      msg.includes('no longer available') ||
+      msg.includes('not found') ||
+      msg.includes('404') ||
+      msg.includes('502') ||
+      msg.includes('503') ||
+      msg.includes('model not supported') ||
+      msg.includes('does not exist') ||
+      msg.includes('is not available') ||
+      msg.includes('deprecated')
+    );
+  },
+}));
+
 vi.mock('@google/genai', () => {
   return {
     GoogleGenAI: class MockGoogleGenAI {
@@ -46,11 +70,13 @@ import {
   IMAGEN_MODEL,
 } from '../../services/geminiService';
 
-import { PROXY_MODELS_BY_TIER } from '../../constants';
+// PROXY_MODELS_BY_TIER is still exported from constants but no longer used directly by geminiService
 
 beforeEach(() => {
   vi.clearAllMocks();
   MockedGoogleGenAI._reset();
+  // Default: dynamic model discovery returns a single model
+  mockGetModelsForTier.mockResolvedValue(['gemini-3.1-flash-image']);
 });
 
 describe('isUsingProxy', () => {
@@ -149,8 +175,9 @@ describe('generateImageApi', () => {
 
       await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null);
 
+      expect(mockGetModelsForTier).toHaveBeenCalledWith('economy');
       expect(mockGenerateContent).toHaveBeenCalledWith(
-        expect.objectContaining({ model: PROXY_MODELS_BY_TIER.economy[0] }),
+        expect.objectContaining({ model: 'gemini-3.1-flash-image' }),
       );
     });
 
@@ -159,8 +186,9 @@ describe('generateImageApi', () => {
 
       await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null, 'standard');
 
+      expect(mockGetModelsForTier).toHaveBeenCalledWith('standard');
       expect(mockGenerateContent).toHaveBeenCalledWith(
-        expect.objectContaining({ model: PROXY_MODELS_BY_TIER.standard[0] }),
+        expect.objectContaining({ model: 'gemini-3.1-flash-image' }),
       );
     });
 
@@ -169,8 +197,9 @@ describe('generateImageApi', () => {
 
       await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null, 'pro');
 
+      expect(mockGetModelsForTier).toHaveBeenCalledWith('pro');
       expect(mockGenerateContent).toHaveBeenCalledWith(
-        expect.objectContaining({ model: PROXY_MODELS_BY_TIER.pro[0] }),
+        expect.objectContaining({ model: 'gemini-3.1-flash-image' }),
       );
     });
 
@@ -230,7 +259,7 @@ describe('generateImageApi', () => {
 
       expect(mockGenerateContent).toHaveBeenCalledTimes(1);
       expect(mockGenerateContent).toHaveBeenCalledWith(
-        expect.objectContaining({ model: PROXY_MODELS_BY_TIER.standard[0] }),
+        expect.objectContaining({ model: 'gemini-3.1-flash-image' }),
       );
     });
     it('throws after all models in tier are exhausted', async () => {
@@ -238,10 +267,25 @@ describe('generateImageApi', () => {
       await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null))
         .rejects.toThrow();
     });
-    it('does not rotate on non-quota errors', async () => {
-      mockGenerateContent.mockRejectedValue(new Error('NOT_FOUND'));
+    it('rotates to next model on unavailability errors (unknown provider, 502, etc.)', async () => {
+      mockGetModelsForTier.mockResolvedValue(['model-a', 'model-b']);
+      mockGenerateContent
+        .mockRejectedValueOnce(new Error('got status: 502 unknown provider for model model-a'))
+        .mockResolvedValueOnce(mockImageResponse);
+
+      const result = await generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null);
+
+      expect(mockGenerateContent).toHaveBeenCalledTimes(2);
+      expect(mockGenerateContent).toHaveBeenNthCalledWith(1, expect.objectContaining({ model: 'model-a' }));
+      expect(mockGenerateContent).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: 'model-b' }));
+      expect(mockInvalidateModelCache).toHaveBeenCalled();
+      expect(result.base64Image).toBe('base64encodedimage');
+    });
+
+    it('does not rotate on non-retryable errors', async () => {
+      mockGenerateContent.mockRejectedValue(new Error('API key not valid'));
       await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null))
-        .rejects.toThrow('Image generation failed');
+        .rejects.toThrow('Invalid API Key');
       expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     });
 
@@ -252,6 +296,17 @@ describe('generateImageApi', () => {
         .rejects.toThrow('cooldown');
 
       expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws after all models are unavailable', async () => {
+      mockGetModelsForTier.mockResolvedValue(['model-a', 'model-b']);
+      mockGenerateContent.mockRejectedValue(new Error('got status: 502 unknown provider'));
+
+      await expect(generateImageApi('a cat', 'Photorealistic', '1:1', 'image/png', null))
+        .rejects.toThrow();
+
+      expect(mockGenerateContent).toHaveBeenCalledTimes(2);
+      expect(mockInvalidateModelCache).toHaveBeenCalled();
     });
   });
 
@@ -408,8 +463,8 @@ describe('constants', () => {
     expect(CLIPROXY_KEY).toBe('hoainho');
   });
 
-  it('IMAGE_MODEL_PROXY is gemini-3-pro-image-preview', () => {
-    expect(IMAGE_MODEL_PROXY).toBe('gemini-3-pro-image-preview');
+  it('IMAGE_MODEL_PROXY is gemini-3.1-flash-image', () => {
+    expect(IMAGE_MODEL_PROXY).toBe('gemini-3.1-flash-image');
   });
 
   it('IMAGE_MODEL_DIRECT is gemini-2.5-flash-image', () => {

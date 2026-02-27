@@ -2,7 +2,7 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { ExportMimeType, AspectRatioValue, ModelTier } from '../types';
 import { buildEnhancedPrompt, buildPromptForTier } from './promptBuilder';
-import { PROXY_MODELS_BY_TIER } from '../constants';
+import { getModelsForTier, invalidateModelCache, isModelUnavailableError } from './modelRegistry';
 
 export interface GeneratedImageResult {
   base64Image: string;
@@ -12,7 +12,7 @@ export interface GeneratedImageResult {
 export const CLIPROXY_URL = process.env.VITE_OPENCODE_API_URL || 'https://proxy.hoainho.info';
 export const CLIPROXY_KEY = process.env.VITE_OPENCODE_API_KEY || 'hoainho';
 
-export const IMAGE_MODEL_PROXY = 'gemini-3-pro-image-preview';
+export const IMAGE_MODEL_PROXY = 'gemini-3.1-flash-image';
 export const IMAGE_MODEL_DIRECT = 'gemini-2.5-flash-image';
 export const IMAGEN_MODEL = 'imagen-4.0-generate-001';
 
@@ -164,18 +164,32 @@ export const generateImageApi = async (
     }
   }
 
-  const modelsToTry = PROXY_MODELS_BY_TIER[modelTier];
+  // Dynamic model discovery + rotation for proxy mode
+  const modelsToTry = await getModelsForTier(modelTier);
   let lastError: unknown = null;
 
   for (const model of modelsToTry) {
     try {
-      return await generateWithGemini(ai, model, prompt, styleKey, outputMimeType, modelTier);
+      const result = await generateWithGemini(ai, model, prompt, styleKey, outputMimeType, modelTier);
+      return result;
     } catch (error) {
       lastError = error;
+
+      // Model unavailable (unknown provider, 502, deprecated, etc.)
+      // → invalidate cache so next request re-discovers, then try next model
+      if (isModelUnavailableError(error)) {
+        console.warn(`Model ${model} is unavailable (${error instanceof Error ? error.message : 'unknown'}), rotating to next model...`);
+        invalidateModelCache();
+        continue;
+      }
+
+      // Quota/rate-limit error → try next model without invalidating cache
       if (isQuotaError(error)) {
         console.warn(`Model ${model} quota exhausted, trying next model...`);
         continue;
       }
+
+      // Other errors (API key invalid, content policy, etc.) → fail immediately
       handleApiError(error);
     }
   }

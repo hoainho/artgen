@@ -38,22 +38,52 @@ export const MODEL_TIERS: ReadonlyArray<ModelTierInfo> = [
   { value: 'pro', label: 'Pro', description: 'Full enhanced prompt — best quality, all style details', requiresProAccess: true },
 ];
 
+// Static fallback models per tier — used when dynamic discovery fails.
+// Updated to match currently known working models on the proxy.
 export const PROXY_MODELS_BY_TIER: Record<ModelTier, string[]> = {
-  economy: ['gemini-3-pro-image-preview'],
-  standard: ['gemini-3-pro-image-preview'],
-  pro: ['gemini-3-pro-image-preview'],
+  economy: ['gemini-3.1-flash-image'],
+  standard: ['gemini-3.1-flash-image', 'gemini-3.1-pro-low'],
+  pro: ['gemini-3.1-pro-high', 'gemini-3.1-flash-image'],
 };
+
+/**
+ * Preferred image models in priority order.
+ * When dynamic discovery finds available models, they are sorted by this preference.
+ * Best quality first — the system will try them in order and rotate on failure.
+ */
+export const IMAGE_MODEL_PREFERENCES: string[] = [
+  'gemini-3.1-flash-image',  // Dedicated image model — best quality, proven working
+  'gemini-3.1-pro-high',     // High-quality pro model
+  'gemini-3.1-pro-low',      // Lower-cost pro variant
+  'gemini-3-pro-preview',    // Previous gen (may be deprecated)
+  'gemini-2.5-flash',        // Older gen fallback
+];
+
+/**
+ * Patterns to identify image-capable Gemini models from the proxy model list.
+ * Both string includes and RegExp are supported.
+ */
+export const GEMINI_IMAGE_MODEL_PATTERNS: (string | RegExp)[] = [
+  'image',                          // e.g. gemini-3.1-flash-image
+  /^gemini-3\.1-pro/,              // gemini-3.1-pro-high, gemini-3.1-pro-low
+  /^gemini-3-pro/,                  // gemini-3-pro-preview
+  /^gemini-.*flash-image/,          // any flash image variant
+];
+
+/** How long to cache the proxy model list (5 minutes). */
+export const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export const PRO_ACCESS_KEYS = ['RD-PRO-2025-UNLIMITED', 'RD-BETA-ACCESS-KEY'];
 
 export const INITIAL_RELEASE_NOTES: ReleaseNote = {
-  version: '3.4.0',
-  date: 'February 23, 2026',
+  version: '3.5.0',
+  date: 'February 27, 2026',
   changes: [
-    'Token optimization: Economy/Standard/Pro tiers now use different prompt complexities.',
-    'Economy tier uses minimal prompts for lowest token cost.',
-    'Pro tier uses full enhanced prompts with all style details and quality boosters.',
-    'Improved image download: proper Blob-based download for reliable file exports.',
-    'Professional prompt engineering with 15 style-specific templates.',
+    'Dynamic model discovery: auto-detects available image models from proxy — no more hardcoded model IDs.',
+    'Smart model rotation: automatically rotates to the next model on errors (502, unknown provider, deprecated, quota exhausted).',
+    'Self-healing cache: invalidates model cache when a model becomes unavailable, re-discovers on next request.',
+    'Updated default image model to gemini-3.1-flash-image (dedicated image generation model).',
+    'Supported image models: gemini-3.1-flash-image, gemini-3.1-pro-high, gemini-3.1-pro-low, gemini-3-pro-preview, gemini-2.5-flash.',
+    'Available proxy models: Gemini (gemini-3.1-flash-image, gemini-3.1-pro-high, gemini-3.1-pro-low, gemini-3-pro-preview, gemini-3-flash-preview, gemini-2.5-flash, gemini-2.5-flash-lite, gemini-2.5-pro), GPT (gpt-5 / 5.1 / 5.2 / codex), Claude (sonnet-4-6, opus-4-6), Qwen (qwen3-coder-flash/plus), Kimi (kimi-k2-instruct).',
   ],
 };
